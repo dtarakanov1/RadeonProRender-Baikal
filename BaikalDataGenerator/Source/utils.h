@@ -29,23 +29,6 @@ THE SOFTWARE.
 #include <vector>
 
 
-struct DGenConfig
-{
-    unsigned device_idx = 0;
-    std::filesystem::path scene_file;
-    std::filesystem::path light_file;
-    std::filesystem::path camera_file;
-    std::filesystem::path spp_file;
-    std::filesystem::path output_dir;
-    size_t width = 0;
-    size_t height = 0;
-    size_t split_num = 1;
-    size_t split_idx = 0;
-    std::int32_t offset_idx = 0;
-    std::uint32_t num_bounces = 5;
-    bool gamma_correction = false;
-};
-
 template<typename T>
 std::vector<std::vector<T>> SplitVector(const std::vector<T>& vec, size_t n)
 {

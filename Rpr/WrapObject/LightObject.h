@@ -50,7 +50,13 @@ public:
     //light methods
     void SetTransform(const RadeonRays::matrix& transform);
     RadeonRays::matrix GetTransform();
-    
+
+    void SetPosition(const RadeonRays::float3& position);
+    RadeonRays::float3 GetPosition();
+
+    void SetDirection(const RadeonRays::float3& direction);
+    RadeonRays::float3 GetDirection();
+
     void SetRadiantPower(const RadeonRays::float3& p);
     RadeonRays::float3 GetRadiantPower();
 

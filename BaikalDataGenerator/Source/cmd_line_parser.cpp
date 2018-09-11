@@ -37,16 +37,16 @@ namespace
         "                        -light_file LIGHT_CONFIG_PATH -camera_file CAMERA_CONFIG_PATH\n"
         "                        -output_dir OUTPUT_DIRECTORY [-device DEVICE_INDEX] [-gamma]\n"
         "                        [-split_num CAMERA_SUBSET_NUMBER [-split_idx USE_CAMERA_SUBSET]]\n"
-        "                        [-offset_idx CAMERA_NUMERATION_OFFSET] [-nb BOUNSES_NUMBER]\n\n";
+        "                        [-offset_idx CAMERA_NUMERATION_OFFSET] [-nb BOUNCES_NUMBER]\n\n";
 }
 
 CmdLineParser::CmdLineParser(int argc, char* argv[])
     : m_cmd_parser(argc, argv)
 {   }
 
-DGenConfig CmdLineParser::Parse() const
+AppConfig CmdLineParser::Parse() const
 {
-    DGenConfig config;
+    AppConfig config;
 
     config.device_idx = m_cmd_parser.GetOption("-device", config.device_idx);
 

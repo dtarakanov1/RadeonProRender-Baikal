@@ -22,35 +22,41 @@ THE SOFTWARE.
 
 #pragma once
 
-#include <radeon_rays.h>
-#include <string>
+#include "app_config.h"
+#include "data_generator_params.h"
+#include "filesystem.h"
 
-struct CameraInfo
+#include "Rpr/WrapObject/CameraObject.h"
+#include "Rpr/WrapObject/LightObject.h"
+
+#include <vector>
+
+
+class ObjectLoader
 {
-    std::size_t index;
-    std::string type;
-    RadeonRays::float3 pos;
-    RadeonRays::float3 at;
-    RadeonRays::float3 up;
-    RadeonRays::float2 sensor_size;
-    RadeonRays::float2 zcap;
-    float aperture;
-    float focus_distance;
-    float focal_length;
-};
+public:
+    explicit ObjectLoader(const AppConfig& config);
 
-struct LightInfo
-{
-    std::string type;
-    RadeonRays::float3 pos;
-    RadeonRays::float3 dir;
-    RadeonRays::float3 rad;
+    const std::vector<CameraObject>& Cameras() const;
+    const std::vector<LightObject>& Lights() const;
+    const std::vector<size_t>& Spp() const;
 
-    // cone shape, this option available only for spot light
-    RadeonRays::float2 cs;
+    DataGeneratorParams GetDataGeneratorParams() const;
 
-    // this options available only for ibl
-    // path to texture image
-    std::string texture;
-    float mul;
+private:
+    void ValidateConfig(const AppConfig& config) const;
+
+    void LoadCameras();
+    void LoadLights();
+    void LoadSpp();
+
+    void LoadScene();
+
+    std::vector<CameraObject> m_cameras;
+    std::vector<LightObject> m_lights;
+    std::vector<size_t> m_spp;
+
+    std::shared_ptr<Baikal::Scene1> m_scene;
+
+    AppConfig m_app_config;
 };

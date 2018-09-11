@@ -22,35 +22,7 @@ THE SOFTWARE.
 
 #pragma once
 
-#include "utils.h"
-#include "input_info.h"
-#include "filesystem.h"
+#include "data_generator_params.h"
 
-#include <vector>
 
-using CameraIterator = std::vector<CameraInfo>::const_iterator;
-using LightsIterator = std::vector<LightInfo>::const_iterator;
-using SppIterator = std::vector<int>::const_iterator;
-
-class ConfigLoader
-{
-public:
-    explicit ConfigLoader(const DGenConfig& config);
-
-    std::vector<CameraInfo> CamStates() const;
-    std::vector<LightInfo> Lights() const;
-    const std::filesystem::path& LightsDir() const;
-    std::vector<size_t> Spp() const;
-
-    private:
-
-    void ValidateConfig(const DGenConfig& config) const;
-
-    void LoadCameraConfig(const std::filesystem::path& file_name);
-    void LoadLightConfig(const std::filesystem::path& file_name);
-    void LoadSppConfig(const std::filesystem::path& file_name);
-
-    std::vector<CameraInfo> m_camera_states;
-    std::vector<LightInfo> m_light_settings;
-    std::vector<size_t> m_spp;
-    std::filesystem::path m_ligths_dir;};
+void GenerateDataset(DataGeneratorParams const* params);

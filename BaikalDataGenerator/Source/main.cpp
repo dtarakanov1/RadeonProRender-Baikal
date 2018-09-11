@@ -21,36 +21,25 @@ THE SOFTWARE.
 ********************************************************************/
 
 #include "cmd_line_parser.h"
-#include "config_loader.h"
+#include "object_loader.h"
 #include "devices.h"
 #include "logging.h"
-#include "render.h"
+#include "data_generator.h"
 #include "utils.h"
 
 #include <ctime>
 #include <csignal>
 
 
-void Run(const DGenConfig& config)
+void Run(const AppConfig& config)
 {
-    ConfigLoader config_loader(config);
+    ObjectLoader config_loader(config);
+
 
     Render render(config.scene_file, config.width, config.height, config.num_bounces, config.device_idx);
 
-    if ((config.split_num == 0) || (config.split_num > config_loader.CamStates().size()))
-    {
-        THROW_EX("'split_num' should be positive and less than camera states number");
-    }
 
-    if (config.split_idx >= config.split_num)
-    {
-        THROW_EX("'split_idx' must be less than split_num");
-    }
-
-    auto camera_states_subset = GetSplitByIdx(config_loader.CamStates(),
-                                              config.split_num,
-                                              config.split_idx);
-    render.GenerateDataset(camera_states_subset,
+    render.GenerateDataset(config_loader.Cameras(),
                            config_loader.Lights(),
                            config_loader.LightsDir(),
                            config_loader.Spp(),

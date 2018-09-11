@@ -1,20 +1,22 @@
 set(DATAGENERATOR_SOURCES
     Source/main.cpp
+    Source/devices.h
+    Source/devices.cpp
     Source/filesystem.h
     Source/cmd_line_parser.h
     Source/cmd_line_parser.cpp
-    Source/render.h
-    Source/render.cpp
+    Source/data_generator.h
+    Source/data_generator.cpp
+    Source/data_generator_params.h
     Source/utils.h
-    Source/config_loader.h
-    Source/config_loader.cpp
-    Source/input_info.h
+    Source/object_loader.h
+    Source/object_loader.cpp
     Source/logging.h
     Source/logging.cpp
 )
 
 set(SOURCES
-    ${DATAGENERATOR_SOURCES})
+    ${DATAGENERATOR_SOURCES} Source/app_config.h Source/data_generator_params.h)
 
 source_group("Source" FILES ${DATAGENERATOR_SOURCES})
     

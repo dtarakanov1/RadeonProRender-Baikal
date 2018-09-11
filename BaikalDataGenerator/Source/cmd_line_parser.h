@@ -26,6 +26,7 @@ THE SOFTWARE.
 #include "utils.h"
 #include <Utils/cmd_parser.h>
 
+
 class CmdLineParser
 {
 public:
@@ -34,8 +35,8 @@ public:
     // 'argv' - command line arguments string
     CmdLineParser(int argc, char* argv[]);
 
-    // Generate DGenConfig from internal string
-    DGenConfig Parse() const;
+    // Generate AppConfig from internal string
+    AppConfig Parse() const;
 
     // check whether device list is requested
     bool HasListDevicesOption() const;

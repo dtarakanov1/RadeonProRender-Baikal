@@ -21,10 +21,9 @@ THE SOFTWARE.
 ********************************************************************/
 
 #include "devices.h"
-#include "input_info.h"
 #include "logging.h"
 #include "material_io.h"
-#include "render.h"
+#include "data_generator.h"
 #include "utils.h"
 #include "filesystem.h"
 
@@ -42,7 +41,11 @@ THE SOFTWARE.
 
 #include "XML/tinyxml2.h"
 
+#include <algorithm>
 #include <fstream>
+#include <memory>
+#include <vector>
+
 
 using namespace Baikal;
 
@@ -76,6 +79,125 @@ const std::vector<OutputInfo> kSingleIteratedOutputs =
         { Renderer::OutputType::kDepth, "view_shading_depth", 1 }
     }
 };
+
+
+class Render
+{
+public:
+    // 'scene_file' - full path till .obj/.objm or some kind of this files with scene
+    // 'output_width' - width of outputs which will be saved on disk
+    // 'output_height' - height of outputs which will be saved on disk
+    // 'num_bounces' - number of bounces for each ray
+    Render(const std::filesystem::path& scene_file,
+           size_t output_width,
+           size_t output_height,
+           std::uint32_t num_bounces,
+           unsigned device_idx);
+
+    // This function generates dataset for network training
+    // 'cam_states' - camera states range
+    // 'lights' - lights range
+    // 'spp' - spp vector
+    // 'output_dir' - output directory to save dataset
+    // 'gamma_correction_enabled' - flag to enable/disable gamma correction
+    // 'start_cam_id' - the number starting from will be named generated samples
+
+    void GenerateDataset(std::vector<CameraInfo> const& cam_states,
+                         std::vector<LightInfo> const& lights,
+                         const std::filesystem::path& lights_dir,
+                         const std::vector<size_t>& spp,
+                         const std::filesystem::path& output_dir,
+                         std::int32_t cameras_index_offset = 0,
+                         bool gamma_correction_enabled = true)
+    {
+        using namespace RadeonRays;
+
+        if (!std::filesystem::is_directory(output_dir))
+        {
+            THROW_EX("Incorrect output directory signature");
+        }
+
+        // check if number of samples to render wasn't specified
+        if (spp.empty())
+        {
+            THROW_EX("SPP collection is empty");
+        }
+
+        SetLightConfig(lights, lights_dir);
+
+        auto sorted_spp = spp;
+        std::sort(sorted_spp.begin(), sorted_spp.end());
+
+        sorted_spp.erase(std::unique(sorted_spp.begin(), sorted_spp.end()), sorted_spp.end());
+
+        if (sorted_spp.front() <= 0)
+        {
+            THROW_EX("Found negative SPP: " << sorted_spp.front());
+        }
+
+        SaveMetadata(output_dir,
+                     cam_states.begin()->index,
+                     (cam_states.end() - 1)->index,
+                     cameras_index_offset,
+                     gamma_correction_enabled);
+
+        for (const auto& cam_state : cam_states)
+        {
+            GenerateSample(cam_state,
+                           sorted_spp,
+                           output_dir,
+                           cameras_index_offset,
+                           gamma_correction_enabled);
+        }
+    }
+
+
+    ~Render();
+
+private:
+    void UpdateCameraSettings(const CameraInfo& cam_state);
+
+    void SetLight(const LightInfo& light, const std::filesystem::path& lights_dir);
+
+    void SetLightConfig(const std::vector<LightInfo>& lights,
+                        const std::filesystem::path& lights_dir)
+    {
+        for (const auto& light : lights)
+        {
+            SetLight(light, lights_dir);
+        }
+    }
+
+    void SaveOutput(const OutputInfo& info,
+                    const std::string& name,
+                    bool gamma_correction_enabled,
+                    const std::filesystem::path& output_dir);
+
+    void GenerateSample(const CameraInfo& cam_state,
+                        const std::vector<size_t>& spp,
+                        const std::filesystem::path& output_dir,
+                        std::int32_t cameras_index_offset,
+                        bool gamma_correction_enabled);
+
+    void SaveMetadata(const std::filesystem::path& output_dir,
+                      size_t cameras_start_idx,
+                      size_t cameras_end_idx,
+                      std::int32_t cameras_index_offset,
+                      bool gamma_correction_enabled) const;
+
+    std::filesystem::path m_scene_file;
+    std::uint32_t m_width, m_height;
+    std::uint32_t m_num_bounces;
+    unsigned m_device_idx;
+    std::unique_ptr<Baikal::MonteCarloRenderer> m_renderer;
+    std::unique_ptr<Baikal::ClwRenderFactory> m_factory;
+    std::unique_ptr<Baikal::SceneController<Baikal::ClwScene>> m_controller;
+    std::vector<std::unique_ptr<Baikal::Output>> m_outputs;
+    std::shared_ptr<Baikal::Scene1> m_scene;
+    std::shared_ptr<Baikal::PerspectiveCamera> m_camera;
+    std::unique_ptr<CLWContext> m_context;
+};
+
 
 Render::Render(const std::filesystem::path& scene_file,
                size_t output_width,
@@ -230,51 +352,6 @@ void Render::SaveMetadata(const std::filesystem::path& output_dir,
 
 void Render::SetLight(const LightInfo& light, const std::filesystem::path& lights_dir)
 {
-    Light::Ptr light_instance;
-
-    if (light.type == "point")
-    {
-        light_instance = PointLight::Create();
-    }
-    else if (light.type == "direct")
-    {
-        light_instance = DirectionalLight::Create();
-    }
-    else if (light.type == "spot")
-    {
-        light_instance = SpotLight::Create();
-        SpotLight::Ptr spot = std::dynamic_pointer_cast<SpotLight>(light_instance);
-        spot->SetConeShape(light.cs);
-    }
-    else if (light.type == "ibl")
-    {
-        // find texture path and check that it exists
-        std::filesystem::path texture_path = light.texture;
-        if (texture_path.is_relative())
-        {
-            texture_path = lights_dir / light.texture;
-        }
-        if (!std::filesystem::exists(texture_path))
-        {
-            THROW_EX("Texture image not found: " << texture_path.string())
-        }
-
-        auto image_io = ImageIo::CreateImageIo();
-        auto tex = image_io->LoadImage(texture_path.string());
-
-        light_instance = ImageBasedLight::Create();
-        auto ibl = std::dynamic_pointer_cast<ImageBasedLight>(light_instance);
-        ibl->SetTexture(tex);
-        ibl->SetMultiplier(light.mul);
-    }
-    else
-    {
-        THROW_EX("Unsupported light type: " << light.type)
-    }
-
-    light_instance->SetPosition(light.pos);
-    light_instance->SetDirection(light.dir);
-    light_instance->SetEmittedRadiance(light.rad);
     m_scene->AttachLight(light_instance);
 }
 
@@ -445,3 +522,8 @@ void Render::SaveOutput(const OutputInfo& info,
 
 // Enable forward declarations for types stored in unique_ptr
 Render::~Render() = default;
+
+void GenerateDataset(DataGeneratorParams const* params)
+{
+    auto render = std::make_unique<Render>()
+}
