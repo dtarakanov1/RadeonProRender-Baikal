@@ -43,6 +43,7 @@ namespace Baikal
 }
 
 class CLWContext;
+class CLWDevice;
 
 class Render
 {
@@ -54,7 +55,8 @@ public:
     Render(const std::filesystem::path& scene_file,
            size_t output_width,
            size_t output_height,
-           std::uint32_t num_bounces = 5);
+           std::uint32_t num_bounces,
+           unsigned device_idx);
 
     // This function generates dataset for network training
     // 'cam_states' - camera states range
@@ -72,8 +74,8 @@ public:
                          const std::filesystem::path& lights_dir,
                          const std::vector<size_t>& spp,
                          const std::filesystem::path& output_dir,
-                         bool gamma_correction_enabled = true,
-                         size_t start_cam_id = 0);
+                         std::int32_t cameras_index_offset = 0,
+                         bool gamma_correction_enabled = true);
 
     ~Render();
 
@@ -100,14 +102,19 @@ private:
     void GenerateSample(const CameraInfo& cam_state,
                         const std::vector<size_t>& spp,
                         const std::filesystem::path& output_dir,
-                        bool gamma_correction_enabled,
-                        size_t start_cam_id);
+                        std::int32_t cameras_index_offset,
+                        bool gamma_correction_enabled);
 
-    void SaveMetadata(const std::filesystem::path& output_dir) const;
+    void SaveMetadata(const std::filesystem::path& output_dir,
+                      size_t cameras_start_idx,
+                      size_t cameras_end_idx,
+                      std::int32_t cameras_index_offset,
+                      bool gamma_correction_enabled) const;
 
     std::filesystem::path m_scene_file;
     std::uint32_t m_width, m_height;
     std::uint32_t m_num_bounces;
+    unsigned m_device_idx;
     std::unique_ptr<Baikal::MonteCarloRenderer> m_renderer;
     std::unique_ptr<Baikal::ClwRenderFactory> m_factory;
     std::unique_ptr<Baikal::SceneController<Baikal::ClwScene>> m_controller;
@@ -131,20 +138,20 @@ void Render::GenerateDataset(const TCamStatesRange<CameraInfo, Args1 ...>& cam_s
                              const std::filesystem::path& lights_dir,
                              const std::vector<size_t>& spp,
                              const std::filesystem::path& output_dir,
-                             bool gamma_correction_enabled,
-                             const size_t start_cam_id)
+                             std::int32_t cameras_index_offset,
+                             bool gamma_correction_enabled)
 {
     using namespace RadeonRays;
 
     if (!std::filesystem::is_directory(output_dir))
     {
-        THROW_EX("incorrect output directory signature");
+        THROW_EX("Incorrect output directory signature");
     }
 
     // check if number of samples to render wasn't specified
     if (spp.empty())
     {
-        THROW_EX("spp collection is empty");
+        THROW_EX("SPP collection is empty");
     }
 
     SetLightConfig(lights, lights_dir);
@@ -156,15 +163,21 @@ void Render::GenerateDataset(const TCamStatesRange<CameraInfo, Args1 ...>& cam_s
 
     if (sorted_spp.front() <= 0)
     {
-        THROW_EX("spp should be positive");
+        THROW_EX("Found negative SPP: " << sorted_spp.front());
     }
 
-    SaveMetadata(output_dir);
+    SaveMetadata(output_dir,
+                 cam_states.begin()->index,
+                 (cam_states.end() - 1)->index,
+                 cameras_index_offset,
+                 gamma_correction_enabled);
 
-    auto camera_id = start_cam_id;
     for (const auto& cam_state : cam_states)
     {
-        GenerateSample(cam_state, sorted_spp, output_dir, gamma_correction_enabled, camera_id);
-        camera_id++;
+        GenerateSample(cam_state,
+                       sorted_spp,
+                       output_dir,
+                       cameras_index_offset,
+                       gamma_correction_enabled);
     }
 }

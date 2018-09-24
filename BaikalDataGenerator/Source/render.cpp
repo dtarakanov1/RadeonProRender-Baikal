@@ -20,6 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ********************************************************************/
 
+#include "devices.h"
 #include "input_info.h"
 #include "logging.h"
 #include "material_io.h"
@@ -77,13 +78,15 @@ const std::vector<OutputInfo> kSingleIteratedOutputs =
 };
 
 Render::Render(const std::filesystem::path& scene_file,
-    size_t output_width,
-    size_t output_height,
-    std::uint32_t num_bounces)
+               size_t output_width,
+               size_t output_height,
+               std::uint32_t num_bounces,
+               unsigned device_idx)
     : m_scene_file(scene_file),
       m_width(static_cast<std::uint32_t>(output_width)),
       m_height(static_cast<std::uint32_t>(output_height)),
-      m_num_bounces(num_bounces)
+      m_num_bounces(num_bounces),
+      m_device_idx(device_idx)
 {
     using namespace Baikal;
 
@@ -91,33 +94,17 @@ Render::Render(const std::filesystem::path& scene_file,
     assert(m_height);
     assert(num_bounces);
 
-    std::vector<CLWPlatform> platforms;
-    CLWPlatform::CreateAllPlatforms(platforms);
-
-    bool device_found = false;
-
-    for (const auto& platform : platforms)
+    auto devices = GetDevices();
+    if (devices.empty())
     {
-        for (auto i = 0u; i < platform.GetDeviceCount(); i++)
-        {
-            if (platform.GetDevice(i).GetType() == CL_DEVICE_TYPE_GPU)
-            {
-                m_context = std::make_unique<CLWContext>(CLWContext::Create(platform.GetDevice(i)));
-                device_found = true;
-                break;
-            }
-        }
-
-        if (device_found)
-            break;
+        THROW_EX("Cannot find any device");
+    }
+    if (device_idx >= devices.size())
+    {
+        THROW_EX("Cannot find device with index " << device_idx);
     }
 
-    if (!device_found)
-    {
-        THROW_EX("can't find device");
-    }
-
-    assert(m_context);
+    m_context = std::make_unique<CLWContext>(CLWContext::Create(devices[device_idx]));
 
     m_factory = std::make_unique<ClwRenderFactory>(*m_context, "cache");
 
@@ -178,7 +165,11 @@ Render::Render(const std::filesystem::path& scene_file,
 }
 
 
-void Render::SaveMetadata(const std::filesystem::path& output_dir) const
+void Render::SaveMetadata(const std::filesystem::path& output_dir,
+                          size_t cameras_start_idx,
+                          size_t cameras_end_idx,
+                          std::int32_t cameras_index_offset,
+                          bool gamma_correction_enabled) const
 {
     using namespace tinyxml2;
 
@@ -187,36 +178,52 @@ void Render::SaveMetadata(const std::filesystem::path& output_dir) const
     auto file_name = output_dir;
     file_name.append("metadata.xml");
 
-    XMLNode* root= doc.NewElement("metadata");
+    XMLNode* root = doc.NewElement("metadata");
     doc.InsertFirstChild(root);
 
     XMLElement* scene = doc.NewElement("scene");
-    scene->SetAttribute("file", m_scene_file.c_str());
+    scene->SetAttribute("file", m_scene_file.string().c_str());
     root->InsertEndChild(scene);
 
-    // log outputs layout
-    XMLElement* size_attribute = doc.NewElement("layout");
-    size_attribute->SetAttribute("width", m_width);
-    size_attribute->SetAttribute("height", m_height);
-    root->InsertEndChild(size_attribute);
+    XMLElement* cameras = doc.NewElement("cameras");
+    cameras->SetAttribute("start_idx", static_cast<int>(cameras_start_idx));
+    cameras->SetAttribute("end_idx", static_cast<int>(cameras_end_idx));
+    cameras->SetAttribute("idx_offset", cameras_index_offset);
+    root->InsertEndChild(cameras);
 
-    // log outputs data
+    XMLElement* outputs_list = doc.NewElement("outputs");
+    outputs_list->SetAttribute("width", m_width);
+    outputs_list->SetAttribute("height", m_height);
+    root->InsertEndChild(outputs_list);
+
     std::vector<OutputInfo> outputs = kSingleIteratedOutputs;
     outputs.insert(outputs.end(), kMultipleIteratedOutputs.begin(), kMultipleIteratedOutputs.end());
 
     for (const auto& output : outputs)
     {
-        XMLElement* output_attribute = doc.NewElement("input");
-        output_attribute->SetAttribute("name", output.name.c_str());
-        output_attribute->SetAttribute("type", "float32");
-        output_attribute->SetAttribute("channels", output.channels_num);
-        root->InsertEndChild(output_attribute);
+        XMLElement* outputs_item = doc.NewElement("output");
+        outputs_item->SetAttribute("name", output.name.c_str());
+        outputs_item->SetAttribute("type", "float32");
+        outputs_item->SetAttribute("channels", output.channels_num);
+        if (output.type == Renderer::OutputType::kColor)
+        {
+            outputs_item->SetAttribute("gamma_correction", gamma_correction_enabled);
+        }
+        outputs_list->InsertEndChild(outputs_item);
     }
 
     // log render settings
-    XMLElement* render_attribute = doc.NewElement("render");
-    render_attribute->SetAttribute("num_bounce", m_num_bounces);
+    XMLElement* render_attribute = doc.NewElement("renderer");
+    render_attribute->SetAttribute("num_bounces", m_num_bounces);
     root->InsertEndChild(render_attribute);
+
+    auto* device_attribute = doc.NewElement("device");
+    auto device = GetDevices().at(m_device_idx);
+    device_attribute->SetAttribute("idx", m_device_idx);
+    device_attribute->SetAttribute("name", device.GetName().c_str());
+    device_attribute->SetAttribute("vendor", device.GetVendor().c_str());
+    device_attribute->SetAttribute("version", device.GetVersion().c_str());
+    root->InsertEndChild(device_attribute);
 
     doc.SaveFile(file_name.string().c_str());
 }
@@ -249,7 +256,7 @@ void Render::SetLight(const LightInfo& light, const std::filesystem::path& light
         }
         if (!std::filesystem::exists(texture_path))
         {
-            THROW_EX("texture image doesn't exist on specified path")
+            THROW_EX("Texture image not found: " << texture_path.string())
         }
 
         auto image_io = ImageIo::CreateImageIo();
@@ -262,7 +269,7 @@ void Render::SetLight(const LightInfo& light, const std::filesystem::path& light
     }
     else
     {
-        THROW_EX("unsupported light type")
+        THROW_EX("Unsupported light type: " << light.type)
     }
 
     light_instance->SetPosition(light.pos);
@@ -282,8 +289,8 @@ void Render::UpdateCameraSettings(const CameraInfo& cam_state)
 void Render::GenerateSample(const CameraInfo& cam_state,
                             const std::vector<size_t>& sorted_spp,
                             const std::filesystem::path& output_dir,
-                            bool gamma_correction_enabled,
-                            size_t camera_id)
+                            std::int32_t cameras_index_offset,
+                            bool gamma_correction_enabled)
 {
     // create camera if it wasn't  done earlier
     if (!m_camera)
@@ -309,10 +316,10 @@ void Render::GenerateSample(const CameraInfo& cam_state,
     }
 
     // recompile scene cause of changing camera pos and settings
-    m_controller->CompileScene(m_scene);
-    auto& scene = m_controller->GetCachedScene(m_scene);
+    auto& scene = m_controller->CompileScene(m_scene);
 
     auto spp_iter = sorted_spp.begin();
+    auto camera_idx = cam_state.index + cameras_index_offset;
 
     for (auto spp = 1u; spp <= sorted_spp.back(); spp++)
     {
@@ -324,7 +331,7 @@ void Render::GenerateSample(const CameraInfo& cam_state,
             {
                 std::stringstream ss;
 
-                ss << "cam_" << camera_id << "_"
+                ss << "cam_" << camera_idx << "_"
                     << output.name << ".bin";
 
                 SaveOutput(output,
@@ -340,7 +347,7 @@ void Render::GenerateSample(const CameraInfo& cam_state,
             {
                 std::stringstream ss;
 
-                ss << "cam_" << camera_id << "_"
+                ss << "cam_" << camera_idx << "_"
                     << output.name << "_spp_" << spp << ".bin";
 
                 SaveOutput(output,
@@ -354,7 +361,7 @@ void Render::GenerateSample(const CameraInfo& cam_state,
 
     DG_LOG(KeyValue("event", "generated")
         << KeyValue("status", "generating")
-        << KeyValue("camera_id", camera_id));
+        << KeyValue("camera_idx", camera_idx));
 }
 
 void Render::SaveOutput(const OutputInfo& info,
@@ -368,7 +375,7 @@ void Render::SaveOutput(const OutputInfo& info,
 
     assert(output);
 
-    auto buffer = static_cast<Baikal::ClwOutput*>(output)->data();
+    auto buffer = dynamic_cast<Baikal::ClwOutput*>(output)->data();
 
     std::vector<RadeonRays::float3> output_data(buffer.GetElementCount());
 
@@ -428,8 +435,7 @@ void Render::SaveOutput(const OutputInfo& info,
         }
     }
 
-    std::filesystem::path file_name = output_dir;
-    file_name.append(name);
+    auto file_name = output_dir / name;
 
     std::ofstream f (file_name.string(), std::ofstream::binary);
 

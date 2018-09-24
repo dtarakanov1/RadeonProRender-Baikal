@@ -22,8 +22,10 @@ THE SOFTWARE.
 
 #include "cmd_line_parser.h"
 #include "config_loader.h"
+#include "devices.h"
 #include "logging.h"
 #include "render.h"
+#include "utils.h"
 
 #include <ctime>
 #include <csignal>
@@ -33,7 +35,7 @@ void Run(const DGenConfig& config)
 {
     ConfigLoader config_loader(config);
 
-    Render render(config.scene_file, config.width, config.height, config.num_bounces);
+    Render render(config.scene_file, config.width, config.height, config.num_bounces, config.device_idx);
 
     if ((config.split_num == 0) || (config.split_num > config_loader.CamStates().size()))
     {
@@ -45,31 +47,19 @@ void Run(const DGenConfig& config)
         THROW_EX("'split_idx' must be less than split_num");
     }
 
-    auto split_idx = config.split_idx;
-    auto split_num = config.split_num;
-    auto camera_states = config_loader.CamStates();
-    auto dataset_size = camera_states.size() / config.split_num;
-
-    std::vector<CameraInfo> camera_states_subset {
-        camera_states.begin() + split_idx * dataset_size,
-        camera_states.begin() + split_idx * dataset_size  + dataset_size};
-
-    if ((camera_states.size() % split_num != 0) &&
-        (split_idx < (camera_states.size() % split_num)))
-    {
-        camera_states_subset.push_back(camera_states[dataset_size * split_num + split_idx]);
-    }
-
+    auto camera_states_subset = GetSplitByIdx(config_loader.CamStates(),
+                                              config.split_num,
+                                              config.split_idx);
     render.GenerateDataset(camera_states_subset,
                            config_loader.Lights(),
                            config_loader.LightsDir(),
                            config_loader.Spp(),
                            config.output_dir,
-                           config.gamma_correction,
-                           config.offset_idx);
+                           config.offset_idx,
+                           config.gamma_correction);
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 try
 {
     auto OnCancel = [](int signal)
@@ -96,8 +86,6 @@ try
     std::signal(SIGILL, OnFailure);
     std::signal(SIGSEGV, OnFailure);
 
-    DG_LOG(KeyValue("status", "running") << KeyValue("start_ts", std::time(nullptr)));
-
     CmdLineParser cmd_parser(argc, argv);
 
     if (cmd_parser.HasHelpOption())
@@ -105,6 +93,22 @@ try
         cmd_parser.ShowHelp();
         return 0;
     }
+
+    if (cmd_parser.HasListDevicesOption())
+    {
+        std::cout << "Device list:\n";
+        auto devices = GetDevices();
+        for (std::size_t idx = 0; idx < devices.size(); ++idx)
+        {
+            DG_LOG(KeyValue("idx", idx)
+                << KeyValue("name", devices[idx].GetName())
+                << KeyValue("vendor", devices[idx].GetVendor())
+                << KeyValue("version", devices[idx].GetVersion()));
+        }
+        return 0;
+    }
+
+    DG_LOG(KeyValue("status", "running") << KeyValue("start_ts", std::time(nullptr)));
 
     auto config = cmd_parser.Parse();
 
